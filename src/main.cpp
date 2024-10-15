@@ -2,6 +2,14 @@
 #include <TM1637Display.h>
 #include "pwm_lib.h"
 
+#define MIN_RPM 5.0
+#define MAX_RPM 50.0
+#define STEPS_PER_REV 25600.0
+#define MIN_FREQ (MIN_RPM * STEPS_PER_REV / 60.0)
+#define MAX_FREQ (MAX_RPM * STEPS_PER_REV / 60.0)
+
+#define CLK_FREQ 84000000.0 // 84 MHz
+
 const int analogPin = A0;                                                         // Analog input pin for RPM control via potentiometer
 arduino_due::pwm_lib::pwm<arduino_due::pwm_lib::pwm_pin::PWML7_PC24> stepper_pin; // PWM output pin (D6 = PC24)
 
@@ -10,10 +18,13 @@ const int DIO = 57; // TM1637 Display DIO pin
 
 unsigned long previousMillis = 0;
 const long interval = 50; // Interval to read the analog input (50 ms)
+float acctual_freq = MIN_FREQ;
 
 TM1637Display display(CLK, DIO);
 void setup_pwm();
-void update_pwm(int freq);
+void update_pwm(float freq);
+float map_float(long x, long in_min, long in_max, float out_min, float out_max);
+
 void setup()
 {
     display.setBrightness(0x0f, true);
@@ -33,33 +44,33 @@ void loop()
 
         // Read potentiometer value
         int analogValue = analogRead(analogPin);
+        analogValue = analogValue & 0xFFFE;             // Mask the least significant bit - denoising
+        analogValue = constrain(analogValue, 10, 1020); // work around physical limits of the potentiometer
+        float frequency = map_float(analogValue, 10, 1020, MAX_FREQ, MIN_FREQ);
+        float rpm = map_float(analogValue, 10, 1020, MAX_RPM, MIN_RPM);
 
-        // Map analog value (0-1023) to frequency and RPM ranges
-        int frequency = map(analogValue, 0, 1023, 1000, 10000); // 1kHz to 10kHz frequency
-        int rpm = map(analogValue, 0, 1023, 50, 400);           // 50 to 400 RPM
+        // display.showNumberDec(rpm); // Display the current RPM on the 7-segment display
+        display.showNumberDecEx(rpm * 10.0, 0b00100000);
 
-        display.showNumberDec(rpm); // Display the current RPM on the 7-segment display
-        // update_pwm(frequency);      // Update PWM frequency based on potentiometer
+        update_pwm(frequency); // Update PWM frequency based on potentiometer
     }
 }
 
-using namespace arduino_due::pwm_lib;
-
 void setup_pwm()
 {
-
-#define CAPTURE_TIME_WINDOW 15000000 // usecs
-#define DUTY_KEEPING_TIME 30000      // msecs
-
-#define PWM_PERIOD_PIN_35 80000000 // hundredth of usecs (1e-8 secs)
-#define PWM_DUTY_PIN_35 40000000   // 100 msecs in hundredth of usecs (1e-8 secs)
-
-    stepper_pin.start(PWM_PERIOD_PIN_35, PWM_DUTY_PIN_35);
+    uint32_t period = CLK_FREQ / acctual_freq;
+    stepper_pin.start(period, period >> 1);
 }
 
-void update_pwm(int freq)
+void update_pwm(float freq)
 {
     // Calculate new period based on frequency (base clock = 84 MHz)
-    uint32_t period = 84000000 / freq;
-    stepper_pin.set_period_and_duty(period, period / 2); // Update duty cycle to 50%
+    acctual_freq = acctual_freq * 0.975 + 0.025 * freq;
+    uint32_t period = CLK_FREQ / acctual_freq;
+    stepper_pin.set_period_and_duty(period, period >> 1); // Update duty cycle to 50%
+}
+
+float map_float(long x, long in_min, long in_max, float out_min, float out_max)
+{
+    return (float)(x - in_min) * (out_max - out_min) / (float)(in_max - in_min) + out_min;
 }
