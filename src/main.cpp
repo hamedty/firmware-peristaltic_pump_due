@@ -62,8 +62,8 @@ void update()
     bool in1 = digitalRead(ms_in1);
     bool in2 = digitalRead(ms_in2);
 
-    bool off = !in1 && in2;
-    bool reverse = !in1 && !in2;
+    bool off = in1 && in2;
+    bool reverse = !in1 && in2;
 
     // int d = off * 10 + reverse;
     // display.showNumberDec(d);
